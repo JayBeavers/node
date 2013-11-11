@@ -46,7 +46,7 @@ static void create_dir(uv_loop_t* loop, const char* name) {
   int r;
   uv_fs_t req;
   r = uv_fs_mkdir(loop, &req, name, 0755, NULL);
-  ASSERT(r == 0 || uv_last_error(loop).code == UV_EEXIST);
+  ASSERT(r == 0 || r == UV_EEXIST);
   uv_fs_req_cleanup(&req);
 }
 
@@ -56,8 +56,8 @@ static void create_file(uv_loop_t* loop, const char* name) {
   uv_fs_t req;
 
   r = uv_fs_open(loop, &req, name, O_WRONLY | O_CREAT,
-      S_IWRITE | S_IREAD, NULL);
-  ASSERT(r != -1);
+      S_IWUSR | S_IRUSR, NULL);
+  ASSERT(r >= 0);
   file = r;
   uv_fs_req_cleanup(&req);
   r = uv_fs_close(loop, &req, file, NULL);
@@ -71,16 +71,16 @@ static void touch_file(uv_loop_t* loop, const char* name) {
   uv_fs_t req;
 
   r = uv_fs_open(loop, &req, name, O_RDWR, 0, NULL);
-  ASSERT(r != -1);
+  ASSERT(r >= 0);
   file = r;
   uv_fs_req_cleanup(&req);
 
   r = uv_fs_write(loop, &req, file, "foo", 4, -1, NULL);
-  ASSERT(r != -1);
+  ASSERT(r >= 0);
   uv_fs_req_cleanup(&req);
 
   r = uv_fs_close(loop, &req, file, NULL);
-  ASSERT(r != -1);
+  ASSERT(r == 0);
   uv_fs_req_cleanup(&req);
 }
 
@@ -103,6 +103,7 @@ static void fs_event_cb_dir(uv_fs_event_t* handle, const char* filename,
   ASSERT(status == 0);
   ASSERT(events == UV_RENAME);
   ASSERT(filename == NULL || strcmp(filename, "file1") == 0);
+  ASSERT(0 == uv_fs_event_stop(handle));
   uv_close((uv_handle_t*)handle, close_cb);
 }
 
@@ -113,6 +114,7 @@ static void fs_event_cb_file(uv_fs_event_t* handle, const char* filename,
   ASSERT(status == 0);
   ASSERT(events == UV_CHANGE);
   ASSERT(filename == NULL || strcmp(filename, "file2") == 0);
+  ASSERT(0 == uv_fs_event_stop(handle));
   uv_close((uv_handle_t*)handle, close_cb);
 }
 
@@ -187,12 +189,14 @@ TEST_IMPL(fs_event_watch_dir) {
   remove("watch_dir/");
   create_dir(loop, "watch_dir");
 
-  r = uv_fs_event_init(loop, &fs_event, "watch_dir", fs_event_cb_dir, 0);
-  ASSERT(r != -1);
+  r = uv_fs_event_init(loop, &fs_event);
+  ASSERT(r == 0);
+  r = uv_fs_event_start(&fs_event, fs_event_cb_dir, "watch_dir", 0);
+  ASSERT(r == 0);
   r = uv_timer_init(loop, &timer);
-  ASSERT(r != -1);
+  ASSERT(r == 0);
   r = uv_timer_start(&timer, timer_cb_dir, 100, 0);
-  ASSERT(r != -1);
+  ASSERT(r == 0);
 
   uv_run(loop, UV_RUN_DEFAULT);
 
@@ -221,12 +225,14 @@ TEST_IMPL(fs_event_watch_file) {
   create_file(loop, "watch_dir/file1");
   create_file(loop, "watch_dir/file2");
 
-  r = uv_fs_event_init(loop, &fs_event, "watch_dir/file2", fs_event_cb_file, 0);
-  ASSERT(r != -1);
+  r = uv_fs_event_init(loop, &fs_event);
+  ASSERT(r == 0);
+  r = uv_fs_event_start(&fs_event, fs_event_cb_file, "watch_dir/file2", 0);
+  ASSERT(r == 0);
   r = uv_timer_init(loop, &timer);
-  ASSERT(r != -1);
+  ASSERT(r == 0);
   r = uv_timer_start(&timer, timer_cb_file, 100, 100);
-  ASSERT(r != -1);
+  ASSERT(r == 0);
 
   uv_run(loop, UV_RUN_DEFAULT);
 
@@ -252,8 +258,10 @@ TEST_IMPL(fs_event_watch_file_twice) {
   loop = uv_default_loop();
   timer.data = watchers;
 
-  ASSERT(0 == uv_fs_event_init(loop, watchers + 0, path, fail_cb, 0));
-  ASSERT(0 == uv_fs_event_init(loop, watchers + 1, path, fail_cb, 0));
+  ASSERT(0 == uv_fs_event_init(loop, watchers + 0));
+  ASSERT(0 == uv_fs_event_start(watchers + 0, fail_cb, path, 0));
+  ASSERT(0 == uv_fs_event_init(loop, watchers + 1));
+  ASSERT(0 == uv_fs_event_start(watchers + 1, fail_cb, path, 0));
   ASSERT(0 == uv_timer_init(loop, &timer));
   ASSERT(0 == uv_timer_start(&timer, timer_cb_watch_twice, 10, 0));
   ASSERT(0 == uv_run(loop, UV_RUN_DEFAULT));
@@ -273,9 +281,14 @@ TEST_IMPL(fs_event_watch_file_current_dir) {
   remove("watch_file");
   create_file(loop, "watch_file");
 
-  r = uv_fs_event_init(loop, &fs_event, "watch_file",
-    fs_event_cb_file_current_dir, 0);
-  ASSERT(r != -1);
+  r = uv_fs_event_init(loop, &fs_event);
+  ASSERT(r == 0);
+  r = uv_fs_event_start(&fs_event,
+                        fs_event_cb_file_current_dir,
+                        "watch_file",
+                        0);
+  ASSERT(r == 0);
+
 
   r = uv_timer_init(loop, &timer);
   ASSERT(r == 0);
@@ -310,12 +323,14 @@ TEST_IMPL(fs_event_no_callback_after_close) {
   create_dir(loop, "watch_dir");
   create_file(loop, "watch_dir/file1");
 
-  r = uv_fs_event_init(loop,
-                       &fs_event,
-                       "watch_dir/file1",
-                       fs_event_cb_file,
-                       0);
-  ASSERT(r != -1);
+  r = uv_fs_event_init(loop, &fs_event);
+  ASSERT(r == 0);
+  r = uv_fs_event_start(&fs_event,
+                        fs_event_cb_file,
+                        "watch_dir/file1",
+                        0);
+  ASSERT(r == 0);
+
 
   uv_close((uv_handle_t*)&fs_event, close_cb);
   touch_file(loop, "watch_dir/file1");
@@ -342,12 +357,13 @@ TEST_IMPL(fs_event_no_callback_on_close) {
   create_dir(loop, "watch_dir");
   create_file(loop, "watch_dir/file1");
 
-  r = uv_fs_event_init(loop,
-                       &fs_event,
-                       "watch_dir/file1",
-                       fs_event_cb_file,
-                       0);
-  ASSERT(r != -1);
+  r = uv_fs_event_init(loop, &fs_event);
+  ASSERT(r == 0);
+  r = uv_fs_event_start(&fs_event,
+                        fs_event_cb_file,
+                        "watch_dir/file1",
+                        0);
+  ASSERT(r == 0);
 
   uv_close((uv_handle_t*)&fs_event, close_cb);
 
@@ -376,7 +392,9 @@ static void timer_cb(uv_timer_t* handle, int status) {
 
   ASSERT(status == 0);
 
-  r = uv_fs_event_init(handle->loop, &fs_event, ".", fs_event_fail, 0);
+  r = uv_fs_event_init(handle->loop, &fs_event);
+  ASSERT(r == 0);
+  r = uv_fs_event_start(&fs_event, fs_event_fail, ".", 0);
   ASSERT(r == 0);
 
   uv_close((uv_handle_t*)&fs_event, close_cb);
@@ -415,7 +433,9 @@ TEST_IMPL(fs_event_close_with_pending_event) {
   create_dir(loop, "watch_dir");
   create_file(loop, "watch_dir/file");
 
-  r = uv_fs_event_init(loop, &fs_event, "watch_dir", fs_event_fail, 0);
+  r = uv_fs_event_init(loop, &fs_event);
+  ASSERT(r == 0);
+  r = uv_fs_event_start(&fs_event, fs_event_fail, "watch_dir", 0);
   ASSERT(r == 0);
 
   /* Generate an fs event. */
@@ -474,7 +494,9 @@ TEST_IMPL(fs_event_close_in_callback) {
   create_file(loop, "watch_dir/file4");
   create_file(loop, "watch_dir/file5");
 
-  r = uv_fs_event_init(loop, &fs_event, "watch_dir", fs_event_cb_close, 0);
+  r = uv_fs_event_init(loop, &fs_event);
+  ASSERT(r == 0);
+  r = uv_fs_event_start(&fs_event, fs_event_cb_close, "watch_dir", 0);
   ASSERT(r == 0);
 
   /* Generate a couple of fs events. */
@@ -502,3 +524,35 @@ TEST_IMPL(fs_event_close_in_callback) {
 }
 
 #endif /* HAVE_KQUEUE */
+
+TEST_IMPL(fs_event_start_and_close) {
+  uv_loop_t* loop;
+  uv_fs_event_t fs_event1;
+  uv_fs_event_t fs_event2;
+  int r;
+
+  loop = uv_default_loop();
+
+  create_dir(loop, "watch_dir");
+
+  r = uv_fs_event_init(loop, &fs_event1);
+  ASSERT(r == 0);
+  r = uv_fs_event_start(&fs_event1, fs_event_cb_dir, "watch_dir", 0);
+  ASSERT(r == 0);
+
+  r = uv_fs_event_init(loop, &fs_event2);
+  ASSERT(r == 0);
+  r = uv_fs_event_start(&fs_event2, fs_event_cb_dir, "watch_dir", 0);
+  ASSERT(r == 0);
+
+  uv_close((uv_handle_t*) &fs_event2, close_cb);
+  uv_close((uv_handle_t*) &fs_event1, close_cb);
+
+  uv_run(loop, UV_RUN_DEFAULT);
+
+  ASSERT(close_cb_called == 2);
+
+  remove("watch_dir/");
+  MAKE_VALGRIND_HAPPY();
+  return 0;
+}

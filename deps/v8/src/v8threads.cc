@@ -42,15 +42,18 @@ namespace v8 {
 bool Locker::active_ = false;
 
 
-// Constructor for the Locker object.  Once the Locker is constructed the
-// current thread will be guaranteed to have the lock for a given isolate.
-Locker::Locker(v8::Isolate* isolate)
-  : has_lock_(false),
-    top_level_(true),
-    isolate_(reinterpret_cast<i::Isolate*>(isolate)) {
-  if (isolate_ == NULL) {
-    isolate_ = i::Isolate::GetDefaultIsolateForLocking();
-  }
+Locker::Locker() {
+  Initialize(i::Isolate::GetDefaultIsolateForLocking());
+}
+
+
+// Once the Locker is initialized, the current thread will be guaranteed to have
+// the lock for a given isolate.
+void Locker::Initialize(v8::Isolate* isolate) {
+  ASSERT(isolate != NULL);
+  has_lock_= false;
+  top_level_ = true;
+  isolate_ = reinterpret_cast<i::Isolate*>(isolate);
   // Record that the Locker has been used at least once.
   active_ = true;
   // Get the big lock if necessary.
@@ -86,10 +89,8 @@ Locker::Locker(v8::Isolate* isolate)
 
 
 bool Locker::IsLocked(v8::Isolate* isolate) {
+  ASSERT(isolate != NULL);
   i::Isolate* internal_isolate = reinterpret_cast<i::Isolate*>(isolate);
-  if (internal_isolate == NULL) {
-    internal_isolate = i::Isolate::GetDefaultIsolateForLocking();
-  }
   return internal_isolate->thread_manager()->IsLockedByCurrentThread();
 }
 
@@ -115,11 +116,14 @@ Locker::~Locker() {
 }
 
 
-Unlocker::Unlocker(v8::Isolate* isolate)
-  : isolate_(reinterpret_cast<i::Isolate*>(isolate)) {
-  if (isolate_ == NULL) {
-    isolate_ = i::Isolate::GetDefaultIsolateForLocking();
-  }
+Unlocker::Unlocker() {
+  Initialize(i::Isolate::GetDefaultIsolateForLocking());
+}
+
+
+void Unlocker::Initialize(v8::Isolate* isolate) {
+  ASSERT(isolate != NULL);
+  isolate_ = reinterpret_cast<i::Isolate*>(isolate);
   ASSERT(isolate_->thread_manager()->IsLockedByCurrentThread());
   if (isolate_->IsDefaultIsolate()) {
     isolate_->Exit();
@@ -140,12 +144,13 @@ Unlocker::~Unlocker() {
 
 
 void Locker::StartPreemption(int every_n_ms) {
-  v8::internal::ContextSwitcher::StartPreemption(every_n_ms);
+  v8::internal::ContextSwitcher::StartPreemption(
+      i::Isolate::Current(), every_n_ms);
 }
 
 
 void Locker::StopPreemption() {
-  v8::internal::ContextSwitcher::StopPreemption();
+  v8::internal::ContextSwitcher::StopPreemption(i::Isolate::Current());
 }
 
 
@@ -210,7 +215,7 @@ bool ThreadManager::RestoreThread() {
 
 
 void ThreadManager::Lock() {
-  mutex_->Lock();
+  mutex_.Lock();
   mutex_owner_ = ThreadId::Current();
   ASSERT(IsLockedByCurrentThread());
 }
@@ -218,7 +223,7 @@ void ThreadManager::Lock() {
 
 void ThreadManager::Unlock() {
   mutex_owner_ = ThreadId::Invalid();
-  mutex_->Unlock();
+  mutex_.Unlock();
 }
 
 
@@ -299,8 +304,7 @@ ThreadState* ThreadState::Next() {
 // be distinguished from not having a thread id at all (since NULL is
 // defined as 0.)
 ThreadManager::ThreadManager()
-    : mutex_(OS::CreateMutex()),
-      mutex_owner_(ThreadId::Invalid()),
+    : mutex_owner_(ThreadId::Invalid()),
       lazily_archived_thread_(ThreadId::Invalid()),
       lazily_archived_thread_state_(NULL),
       free_anchor_(NULL),
@@ -311,7 +315,6 @@ ThreadManager::ThreadManager()
 
 
 ThreadManager::~ThreadManager() {
-  delete mutex_;
   DeleteThreadStateList(free_anchor_);
   DeleteThreadStateList(in_use_anchor_);
 }
@@ -384,6 +387,7 @@ bool ThreadManager::IsArchived() {
   return data != NULL && data->thread_state() != NULL;
 }
 
+
 void ThreadManager::Iterate(ObjectVisitor* v) {
   // Expecting no threads during serialization/deserialization
   for (ThreadState* state = FirstThreadStateInUse();
@@ -434,8 +438,7 @@ ContextSwitcher::ContextSwitcher(Isolate* isolate, int every_n_ms)
 
 // Set the scheduling interval of V8 threads. This function starts the
 // ContextSwitcher thread if needed.
-void ContextSwitcher::StartPreemption(int every_n_ms) {
-  Isolate* isolate = Isolate::Current();
+void ContextSwitcher::StartPreemption(Isolate* isolate, int every_n_ms) {
   ASSERT(Locker::IsLocked(reinterpret_cast<v8::Isolate*>(isolate)));
   if (isolate->context_switcher() == NULL) {
     // If the ContextSwitcher thread is not running at the moment start it now.
@@ -451,8 +454,7 @@ void ContextSwitcher::StartPreemption(int every_n_ms) {
 
 // Disable preemption of V8 threads. If multiple threads want to use V8 they
 // must cooperatively schedule amongst them from this point on.
-void ContextSwitcher::StopPreemption() {
-  Isolate* isolate = Isolate::Current();
+void ContextSwitcher::StopPreemption(Isolate* isolate) {
   ASSERT(Locker::IsLocked(reinterpret_cast<v8::Isolate*>(isolate)));
   if (isolate->context_switcher() != NULL) {
     // The ContextSwitcher thread is running. We need to stop it and release
@@ -479,7 +481,7 @@ void ContextSwitcher::Run() {
 
 // Acknowledge the preemption by the receiving thread.
 void ContextSwitcher::PreemptionReceived() {
-  ASSERT(Locker::IsLocked());
+  ASSERT(Locker::IsLocked(i::Isolate::GetDefaultIsolateForLocking()));
   // There is currently no accounting being done for this. But could be in the
   // future, which is why we leave this in.
 }

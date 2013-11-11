@@ -33,8 +33,7 @@ switch (process.argv[2]) {
 
 function parent() {
   var http = require('http');
-  var bigResponse = new Buffer(10240)
-  bigResponse.fill('x');
+  var bigResponse = new Buffer(10240).fill('x');
   var gotTimeout = false;
   var childClosed = false;
   var requests = 0;

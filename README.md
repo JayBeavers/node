@@ -1,4 +1,4 @@
-Evented I/O for V8 javascript. [![Build Status](https://secure.travis-ci.org/joyent/node.png)](http://travis-ci.org/joyent/node)
+Evented I/O for V8 javascript.
 ===
 
 ### To build:
@@ -24,9 +24,14 @@ non-standard name, run the following instead:
     make
     make install
 
+Prerequisites (Windows only):
+
+    * Python 2.6 or 2.7
+    * Visual Studio 2010 or 2012
+
 Windows:
 
-    vcbuild.bat
+    vcbuild nosign
 
 You can download pre-built binaries for various operating systems from
 [http://nodejs.org/download/](http://nodejs.org/download/).  The Windows
@@ -49,7 +54,7 @@ Unix/Macintosh:
 
 Windows:
 
-    vcbuild.bat test
+    vcbuild test
 
 ### To build the documentation:
 

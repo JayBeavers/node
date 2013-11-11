@@ -64,6 +64,8 @@ For TCP sockets, `options` argument should be an object which specifies:
 
   - `localAddress`: Local interface to bind to for network connections.
 
+  - `family` : Version of IP stack. Defaults to `4`.
+
 For UNIX domain sockets, `options` argument should be an object which specifies:
 
   - `path`: Path the client should connect to (Required).
@@ -172,9 +174,9 @@ already been bound to a port or domain socket.
 Listening on a file descriptor is not supported on Windows.
 
 This function is asynchronous.  When the server has been bound,
-['listening'](#event_listening_) event will be emitted.
+['listening'][] event will be emitted.
 the last parameter `callback` will be added as an listener for the
-['listening'](#event_listening_) event.
+['listening'][] event.
 
 ### server.close([callback])
 
@@ -448,6 +450,15 @@ The amount of bytes sent.
 
 
 `net.Socket` instances are [EventEmitter][] with the following events:
+
+### Event: 'lookup'
+
+Emitted after resolving the hostname but before connecting.
+Not applicable to UNIX sockets.
+
+* `err` {Error | Null} The error object.  See [dns.lookup()][].
+* `address` {String} The IP address.
+* `family` {String | Null} The address type.  See [dns.lookup()][].
 
 ### Event: 'connect'
 

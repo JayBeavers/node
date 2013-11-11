@@ -57,6 +57,32 @@ CcTest::CcTest(TestFunction* callback, const char* file, const char* name,
 }
 
 
+v8::Persistent<v8::Context> CcTest::context_;
+
+
+void CcTest::InitializeVM(CcTestExtensionFlags extensions) {
+  const char* extension_names[kMaxExtensions];
+  int extension_count = 0;
+#define CHECK_EXTENSION_FLAG(Name, Id) \
+  if (extensions.Contains(Name##_ID)) extension_names[extension_count++] = Id;
+  EXTENSION_LIST(CHECK_EXTENSION_FLAG)
+#undef CHECK_EXTENSION_FLAG
+  v8::Isolate* isolate = default_isolate();
+  if (context_.IsEmpty()) {
+    v8::HandleScope scope(isolate);
+    v8::ExtensionConfiguration config(extension_count, extension_names);
+    v8::Local<v8::Context> context = v8::Context::New(isolate, &config);
+    context_.Reset(isolate, context);
+  }
+  {
+    v8::HandleScope scope(isolate);
+    v8::Local<v8::Context> context =
+        v8::Local<v8::Context>::New(isolate, context_);
+    context->Enter();
+  }
+}
+
+
 static void PrintTestList(CcTest* current) {
   if (current == NULL) return;
   PrintTestList(current->prev());
@@ -69,8 +95,33 @@ static void PrintTestList(CcTest* current) {
 }
 
 
+v8::Isolate* CcTest::default_isolate_;
+
+
+class CcTestArrayBufferAllocator : public v8::ArrayBuffer::Allocator {
+  virtual void* Allocate(size_t length) { return malloc(length); }
+  virtual void* AllocateUninitialized(size_t length) { return malloc(length); }
+  virtual void Free(void* data, size_t length) { free(data); }
+  // TODO(dslomov): Remove when v8:2823 is fixed.
+  virtual void Free(void* data) { UNREACHABLE(); }
+};
+
+
+static void SuggestTestHarness(int tests) {
+  if (tests == 0) return;
+  printf("Running multiple tests in sequence is deprecated and may cause "
+         "bogus failure.  Consider using tools/run-tests.py instead.\n");
+}
+
+
 int main(int argc, char* argv[]) {
   v8::internal::FlagList::SetFlagsFromCommandLine(&argc, argv, true);
+
+  CcTestArrayBufferAllocator array_buffer_allocator;
+  v8::V8::SetArrayBufferAllocator(&array_buffer_allocator);
+
+  CcTest::set_default_isolate(v8::Isolate::GetCurrent());
+  CHECK(CcTest::default_isolate() != NULL);
   int tests_run = 0;
   bool print_run_count = true;
   for (int i = 1; i < argc; i++) {
@@ -93,8 +144,8 @@ int main(int argc, char* argv[]) {
           if (test->enabled()
               && strcmp(test->file(), file) == 0
               && strcmp(test->name(), name) == 0) {
+            SuggestTestHarness(tests_run++);
             test->Run();
-            tests_run++;
           }
           test = test->prev();
         }
@@ -107,8 +158,8 @@ int main(int argc, char* argv[]) {
           if (test->enabled()
               && (strcmp(test->file(), file_or_name) == 0
                   || strcmp(test->name(), file_or_name) == 0)) {
+            SuggestTestHarness(tests_run++);
             test->Run();
-            tests_run++;
           }
           test = test->prev();
         }

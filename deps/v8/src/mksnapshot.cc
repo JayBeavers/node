@@ -172,7 +172,8 @@ class CppByteSink : public PartialSnapshotSink {
       int data_space_used,
       int code_space_used,
       int map_space_used,
-      int cell_space_used) {
+      int cell_space_used,
+      int property_cell_space_used) {
     fprintf(fp_,
             "const int Snapshot::%snew_space_used_ = %d;\n",
             prefix,
@@ -197,6 +198,10 @@ class CppByteSink : public PartialSnapshotSink {
             "const int Snapshot::%scell_space_used_ = %d;\n",
             prefix,
             cell_space_used);
+    fprintf(fp_,
+            "const int Snapshot::%sproperty_cell_space_used_ = %d;\n",
+            prefix,
+            property_cell_space_used);
   }
 
   void WritePartialSnapshot() {
@@ -291,7 +296,21 @@ class BZip2Decompressor : public StartupDataDecompressor {
 #endif
 
 
+void DumpException(Handle<Message> message) {
+  String::Utf8Value message_string(message->Get());
+  String::Utf8Value message_line(message->GetSourceLine());
+  fprintf(stderr, "%s at line %d\n", *message_string, message->GetLineNumber());
+  fprintf(stderr, "%s\n", *message_line);
+  for (int i = 0; i <= message->GetEndColumn(); ++i) {
+    fprintf(stderr, "%c", i < message->GetStartColumn() ? ' ' : '^');
+  }
+  fprintf(stderr, "\n");
+}
+
+
 int main(int argc, char** argv) {
+  V8::InitializeICU();
+
   // By default, log code create information in the snapshot.
   i::FLAG_log_code = true;
 
@@ -311,18 +330,25 @@ int main(int argc, char** argv) {
     exit(1);
   }
 #endif
-  i::Serializer::Enable();
-  Persistent<Context> context = v8::Context::New();
+  Isolate* isolate = Isolate::GetCurrent();
+  i::Isolate* internal_isolate = reinterpret_cast<i::Isolate*>(isolate);
+  i::Serializer::Enable(internal_isolate);
+  Persistent<Context> context;
+  {
+    HandleScope handle_scope(isolate);
+    context.Reset(isolate, Context::New(isolate));
+  }
+
   if (context.IsEmpty()) {
     fprintf(stderr,
             "\nException thrown while compiling natives - see above.\n\n");
     exit(1);
   }
   if (i::FLAG_extra_code != NULL) {
-    context->Enter();
     // Capture 100 frames if anything happens.
     V8::SetCaptureStackTraceForUncaughtExceptions(true, 100);
-    HandleScope scope;
+    HandleScope scope(isolate);
+    v8::Context::Scope(v8::Local<v8::Context>::New(isolate, context));
     const char* name = i::FLAG_extra_code;
     FILE* file = i::OS::FOpen(name, "rb");
     if (file == NULL) {
@@ -349,49 +375,37 @@ int main(int argc, char** argv) {
     TryCatch try_catch;
     Local<Script> script = Script::Compile(source);
     if (try_catch.HasCaught()) {
-      fprintf(stderr, "Failure compiling '%s' (see above)\n", name);
+      fprintf(stderr, "Failure compiling '%s'\n", name);
+      DumpException(try_catch.Message());
       exit(1);
     }
     script->Run();
     if (try_catch.HasCaught()) {
       fprintf(stderr, "Failure running '%s'\n", name);
-      Local<Message> message = try_catch.Message();
-      Local<String> message_string = message->Get();
-      Local<String> message_line = message->GetSourceLine();
-      int len = 2 + message_string->Utf8Length() + message_line->Utf8Length();
-      char* buf = new char(len);
-      message_string->WriteUtf8(buf);
-      fprintf(stderr, "%s at line %d\n", buf, message->GetLineNumber());
-      message_line->WriteUtf8(buf);
-      fprintf(stderr, "%s\n", buf);
-      int from = message->GetStartColumn();
-      int to = message->GetEndColumn();
-      int i;
-      for (i = 0; i < from; i++) fprintf(stderr, " ");
-      for ( ; i <= to; i++) fprintf(stderr, "^");
-      fprintf(stderr, "\n");
+      DumpException(try_catch.Message());
       exit(1);
     }
-    context->Exit();
   }
   // Make sure all builtin scripts are cached.
-  { HandleScope scope;
+  { HandleScope scope(isolate);
     for (int i = 0; i < i::Natives::GetBuiltinsCount(); i++) {
-      i::Isolate::Current()->bootstrapper()->NativesSourceLookup(i);
+      internal_isolate->bootstrapper()->NativesSourceLookup(i);
     }
   }
   // If we don't do this then we end up with a stray root pointing at the
   // context even after we have disposed of the context.
-  HEAP->CollectAllGarbage(i::Heap::kNoGCFlags, "mksnapshot");
-  i::Object* raw_context = *(v8::Utils::OpenHandle(*context));
+  internal_isolate->heap()->CollectAllGarbage(
+      i::Heap::kNoGCFlags, "mksnapshot");
+  i::Object* raw_context = *v8::Utils::OpenPersistent(context);
   context.Dispose();
   CppByteSink sink(argv[1]);
   // This results in a somewhat smaller snapshot, probably because it gets rid
   // of some things that are cached between garbage collections.
-  i::StartupSerializer ser(&sink);
+  i::StartupSerializer ser(internal_isolate, &sink);
   ser.SerializeStrongReferences();
 
-  i::PartialSerializer partial_ser(&ser, sink.partial_sink());
+  i::PartialSerializer partial_ser(
+      internal_isolate, &ser, sink.partial_sink());
   partial_ser.Serialize(&raw_context);
 
   ser.SerializeWeakReferences();
@@ -413,7 +427,8 @@ int main(int argc, char** argv) {
       partial_ser.CurrentAllocationAddress(i::OLD_DATA_SPACE),
       partial_ser.CurrentAllocationAddress(i::CODE_SPACE),
       partial_ser.CurrentAllocationAddress(i::MAP_SPACE),
-      partial_ser.CurrentAllocationAddress(i::CELL_SPACE));
+      partial_ser.CurrentAllocationAddress(i::CELL_SPACE),
+      partial_ser.CurrentAllocationAddress(i::PROPERTY_CELL_SPACE));
   sink.WriteSpaceUsed(
       "",
       ser.CurrentAllocationAddress(i::NEW_SPACE),
@@ -421,6 +436,7 @@ int main(int argc, char** argv) {
       ser.CurrentAllocationAddress(i::OLD_DATA_SPACE),
       ser.CurrentAllocationAddress(i::CODE_SPACE),
       ser.CurrentAllocationAddress(i::MAP_SPACE),
-      ser.CurrentAllocationAddress(i::CELL_SPACE));
+      ser.CurrentAllocationAddress(i::CELL_SPACE),
+      ser.CurrentAllocationAddress(i::PROPERTY_CELL_SPACE));
   return 0;
 }

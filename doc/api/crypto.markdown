@@ -101,6 +101,7 @@ Returned by `crypto.createHash`.
 Updates the hash content with the given `data`, the encoding of which
 is given in `input_encoding` and can be `'utf8'`, `'ascii'` or
 `'binary'`.  If no encoding is provided, then a buffer is expected.
+If `data` is a `Buffer` then `input_encoding` is ignored.
 
 This can be called many times with new data as it is streamed.
 
@@ -191,6 +192,7 @@ methods are also supported.
 Updates the cipher with `data`, the encoding of which is given in
 `input_encoding` and can be `'utf8'`, `'ascii'` or `'binary'`.  If no
 encoding is provided, then a buffer is expected.
+If `data` is a `Buffer` then `input_encoding` is ignored.
 
 The `output_encoding` specifies the output format of the enciphered
 data, and can be `'binary'`, `'base64'` or `'hex'`.  If no encoding is
@@ -243,6 +245,7 @@ plain-text data on the the readable side.  The legacy `update` and
 Updates the decipher with `data`, which is encoded in `'binary'`,
 `'base64'` or `'hex'`.  If no encoding is provided, then a buffer is
 expected.
+If `data` is a `Buffer` then `input_encoding` is ignored.
 
 The `output_decoding` specifies in what format to return the
 deciphered plaintext: `'binary'`, `'ascii'` or `'utf8'`.  If no
@@ -290,8 +293,15 @@ with new data as it is streamed.
 ### sign.sign(private_key, [output_format])
 
 Calculates the signature on all the updated data passed through the
-sign.  `private_key` is a string containing the PEM encoded private
-key for signing.
+sign.
+
+`private_key` can be an object or a string. If `private_key` is a string, it is
+treated as the key with no passphrase.
+
+`private_key`:
+
+* `key` : A string holding the PEM encoded private key
+* `passphrase` : A string of passphrase for the private key
 
 Returns the signature in `output_format` which can be `'binary'`,
 `'hex'` or `'base64'`. If no encoding is provided, then a buffer is
@@ -473,6 +483,26 @@ function should never be used where unpredictability is important,
 such as in the generation of encryption keys.
 
 Usage is otherwise identical to `crypto.randomBytes`.
+
+## Class: Certificate
+
+The class used for working with signed public key & challenges. The most
+common usage for this series of functions is when dealing with the `<keygen>`
+element. http://www.openssl.org/docs/apps/spkac.html
+
+Returned by `crypto.Certificate`.
+
+### Certificate.verifySpkac(spkac)
+
+Returns true of false based on the validity of the SPKAC.
+
+### Certificate.exportChallenge(spkac)
+
+Exports the encoded public key from the supplied SPKAC.
+
+### Certificate.exportPublicKey(spkac)
+
+Exports the encoded challenge associated with the SPKAC.
 
 ## crypto.DEFAULT_ENCODING
 
